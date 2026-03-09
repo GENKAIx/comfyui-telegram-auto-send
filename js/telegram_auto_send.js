@@ -5,7 +5,8 @@ app.registerExtension({
     name: "Comfy.TelegramAutoSend",
 
     async setup() {
-        // ── Настройки в панели ComfyUI (Settings → Telegram AutoSend) ──────────
+
+        // ── Настройки ────────────────────────────────────────────────────────
 
         app.ui.settings.addSetting({
             id: "TelegramAutoSend.Enabled",
@@ -47,7 +48,23 @@ app.registerExtension({
             tooltip: "Включить, чтобы получать оригинальный PNG без пережатия Telegram",
         });
 
-        // ── Перехват выполнения нод ──────────────────────────────────────────────
+        app.ui.settings.addSetting({
+            id: "TelegramAutoSend.Silent",
+            name: "🤖 Telegram AutoSend: Бесшумная отправка (без уведомления)",
+            type: "boolean",
+            defaultValue: false,
+            tooltip: "Сообщение придёт без звука и вибрации — как в режиме без звука",
+        });
+
+        app.ui.settings.addSetting({
+            id: "TelegramAutoSend.SendMetadata",
+            name: "🤖 Telegram AutoSend: Отправлять метаданные (модель, сид, промпт…)",
+            type: "boolean",
+            defaultValue: false,
+            tooltip: "После изображения отправляется отдельное сообщение с параметрами генерации",
+        });
+
+        // ── Перехват выполнения нод ──────────────────────────────────────────
 
         api.addEventListener("executed", async (e) => {
             try {
@@ -65,30 +82,40 @@ app.registerExtension({
                 const chatId   = app.ui.settings.getSettingValue("TelegramAutoSend.ChatId", "").trim();
 
                 if (!botToken || !chatId) {
-                    console.warn("[TelegramAutoSend] ⚠️ Укажите Токен бота и Chat ID в настройках ComfyUI (Settings → Telegram AutoSend)");
+                    console.warn("[TelegramAutoSend] ⚠️ Укажите Токен бота и Chat ID в настройках (Settings → Telegram AutoSend)");
                     return;
                 }
 
-                // Форматируем подпись — заменяем {time} и {date}
+                // Форматируем подпись
                 const now     = new Date();
                 const timeStr = now.toLocaleTimeString("ru-RU");
                 const dateStr = now.toLocaleDateString("ru-RU");
                 let caption   = app.ui.settings.getSettingValue("TelegramAutoSend.Caption", "Генерация {time}");
                 caption = caption.replace(/\{time\}/g, timeStr).replace(/\{date\}/g, dateStr);
 
-                const sendAsFile = app.ui.settings.getSettingValue("TelegramAutoSend.SendAsFile", false);
+                const sendAsFile  = app.ui.settings.getSettingValue("TelegramAutoSend.SendAsFile",  false);
+                const silent      = app.ui.settings.getSettingValue("TelegramAutoSend.Silent",      false);
+                const sendMetadata = app.ui.settings.getSettingValue("TelegramAutoSend.SendMetadata", false);
 
-                console.log(`[TelegramAutoSend] 📤 Отправка ${outputImages.length} изображений... (${sendAsFile ? "как файл" : "как фото"})`);
+                const modeLabel = [
+                    sendAsFile   ? "📄 файл" : "🖼 фото",
+                    silent       ? "🔕 тихо" : "🔔",
+                    sendMetadata ? "📋 +метаданные" : "",
+                ].filter(Boolean).join(" | ");
+
+                console.log(`[TelegramAutoSend] 📤 ${outputImages.length} изображений (${modeLabel})`);
 
                 const response = await fetch("/telegram_auto/send", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        images:       outputImages,
-                        bot_token:    botToken,
-                        chat_id:      chatId,
-                        caption:      caption,
-                        send_as_file: sendAsFile,
+                        images:        outputImages,
+                        bot_token:     botToken,
+                        chat_id:       chatId,
+                        caption:       caption,
+                        send_as_file:  sendAsFile,
+                        silent:        silent,
+                        send_metadata: sendMetadata,
                     }),
                 });
 
