@@ -6,22 +6,22 @@ app.registerExtension({
 
     async setup() {
 
-        // ── Настройки ────────────────────────────────────────────────────────
+        // ── Settings (Settings → Telegram AutoSend) ──────────────────────────
 
         app.ui.settings.addSetting({
             id: "TelegramAutoSend.Enabled",
-            name: "🤖 Telegram AutoSend: Включить автоотправку",
+            name: "🤖 Telegram AutoSend: Enable auto-send",
             type: "boolean",
             defaultValue: false,
-            tooltip: "Если включено — все результаты SaveImage автоматически отправляются в Telegram",
+            tooltip: "When enabled, all SaveImage results are automatically sent to Telegram",
         });
 
         app.ui.settings.addSetting({
             id: "TelegramAutoSend.BotToken",
-            name: "🤖 Telegram AutoSend: Токен бота",
+            name: "🤖 Telegram AutoSend: Bot token",
             type: "text",
             defaultValue: "",
-            tooltip: "Токен вашего Telegram-бота (получить у @BotFather)",
+            tooltip: "Your Telegram bot token (get one from @BotFather)",
         });
 
         app.ui.settings.addSetting({
@@ -29,42 +29,35 @@ app.registerExtension({
             name: "🤖 Telegram AutoSend: Chat ID / Channel ID",
             type: "text",
             defaultValue: "",
-            tooltip: "ID чата или канала (например -1001234567890)",
+            tooltip: "Target chat or channel ID (e.g. -1001234567890)",
         });
 
         app.ui.settings.addSetting({
             id: "TelegramAutoSend.Caption",
-            name: "🤖 Telegram AutoSend: Подпись к изображению",
+            name: "🤖 Telegram AutoSend: Image caption",
             type: "text",
-            defaultValue: "Генерация {time}",
-            tooltip: "Подпись. Поддерживает {time} и {date}",
+            defaultValue: "Generation {time}",
+            tooltip: "Caption template. Supports {time} and {date} placeholders",
         });
 
         app.ui.settings.addSetting({
             id: "TelegramAutoSend.SendAsFile",
-            name: "🤖 Telegram AutoSend: Отправлять как файл (без сжатия Telegram)",
+            name: "🤖 Telegram AutoSend: Send as file (no Telegram compression)",
             type: "boolean",
             defaultValue: false,
-            tooltip: "Включить, чтобы получать оригинальный PNG без пережатия Telegram",
+            tooltip: "Enable to receive original PNG without Telegram re-compression",
         });
 
         app.ui.settings.addSetting({
             id: "TelegramAutoSend.Silent",
-            name: "🤖 Telegram AutoSend: Бесшумная отправка (без уведомления)",
+            name: "🤖 Telegram AutoSend: Silent send (no notification sound)",
             type: "boolean",
             defaultValue: false,
-            tooltip: "Сообщение придёт без звука и вибрации — как в режиме без звука",
+            tooltip: "Message is delivered silently — no sound or vibration",
         });
 
-        app.ui.settings.addSetting({
-            id: "TelegramAutoSend.SendMetadata",
-            name: "🤖 Telegram AutoSend: Отправлять метаданные (модель, сид, промпт…)",
-            type: "boolean",
-            defaultValue: false,
-            tooltip: "После изображения отправляется отдельное сообщение с параметрами генерации",
-        });
-
-        // ── Перехват выполнения нод ──────────────────────────────────────────
+        // ── Intercept node execution ─────────────────────────────────────────
+        // SaveImage outputs type="output"; PreviewImage outputs type="temp" — filtered out
 
         api.addEventListener("executed", async (e) => {
             try {
@@ -74,7 +67,6 @@ app.registerExtension({
                 const output = e.detail?.output;
                 if (!output?.images) return;
 
-                // Только SaveImage пишет type="output"; PreviewImage пишет type="temp"
                 const outputImages = output.images.filter(img => img.type === "output");
                 if (outputImages.length === 0) return;
 
@@ -82,55 +74,46 @@ app.registerExtension({
                 const chatId   = app.ui.settings.getSettingValue("TelegramAutoSend.ChatId", "").trim();
 
                 if (!botToken || !chatId) {
-                    console.warn("[TelegramAutoSend] ⚠️ Укажите Токен бота и Chat ID в настройках (Settings → Telegram AutoSend)");
+                    console.warn("[TelegramAutoSend] ⚠️ Bot token and Chat ID must be set in Settings → Telegram AutoSend");
                     return;
                 }
 
-                // Форматируем подпись
                 const now     = new Date();
-                const timeStr = now.toLocaleTimeString("ru-RU");
-                const dateStr = now.toLocaleDateString("ru-RU");
-                let caption   = app.ui.settings.getSettingValue("TelegramAutoSend.Caption", "Генерация {time}");
+                const timeStr = now.toLocaleTimeString("en-US", { hour12: false });
+                const dateStr = now.toLocaleDateString("en-US");
+                let caption   = app.ui.settings.getSettingValue("TelegramAutoSend.Caption", "Generation {time}");
                 caption = caption.replace(/\{time\}/g, timeStr).replace(/\{date\}/g, dateStr);
 
-                const sendAsFile  = app.ui.settings.getSettingValue("TelegramAutoSend.SendAsFile",  false);
-                const silent      = app.ui.settings.getSettingValue("TelegramAutoSend.Silent",      false);
-                const sendMetadata = app.ui.settings.getSettingValue("TelegramAutoSend.SendMetadata", false);
+                const sendAsFile = app.ui.settings.getSettingValue("TelegramAutoSend.SendAsFile", false);
+                const silent     = app.ui.settings.getSettingValue("TelegramAutoSend.Silent",     false);
 
-                const modeLabel = [
-                    sendAsFile   ? "📄 файл" : "🖼 фото",
-                    silent       ? "🔕 тихо" : "🔔",
-                    sendMetadata ? "📋 +метаданные" : "",
-                ].filter(Boolean).join(" | ");
-
-                console.log(`[TelegramAutoSend] 📤 ${outputImages.length} изображений (${modeLabel})`);
+                console.log(`[TelegramAutoSend] Sending ${outputImages.length} image(s) as ${sendAsFile ? "file" : "photo"}${silent ? " (silent)" : ""}`);
 
                 const response = await fetch("/telegram_auto/send", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        images:        outputImages,
-                        bot_token:     botToken,
-                        chat_id:       chatId,
-                        caption:       caption,
-                        send_as_file:  sendAsFile,
-                        silent:        silent,
-                        send_metadata: sendMetadata,
+                        images:       outputImages,
+                        bot_token:    botToken,
+                        chat_id:      chatId,
+                        caption:      caption,
+                        send_as_file: sendAsFile,
+                        silent:       silent,
                     }),
                 });
 
                 const result = await response.json();
                 if (result.ok) {
-                    console.log(`[TelegramAutoSend] ✅ Поставлено в очередь: ${result.queued} изображений`);
+                    console.log(`[TelegramAutoSend] ✅ Queued: ${result.queued} image(s)`);
                 } else {
-                    console.error("[TelegramAutoSend] ❌ Ошибка:", result.error);
+                    console.error("[TelegramAutoSend] ❌ Error:", result.error);
                 }
 
             } catch (err) {
-                console.error("[TelegramAutoSend] 💥 Неожиданная ошибка:", err);
+                console.error("[TelegramAutoSend] ❌ Unexpected error:", err);
             }
         });
 
-        console.log("[TelegramAutoSend] ✅ Расширение загружено");
+        console.log("[TelegramAutoSend] ✅ Extension loaded");
     },
 });
